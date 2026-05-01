@@ -1,0 +1,6 @@
+build/
+.lock-waf_*
+.serena
+.wafpickle-*
+*.pbw
+.DS_Store
