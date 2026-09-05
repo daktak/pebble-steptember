@@ -1,0 +1,24 @@
+#!/sbin/openrc-run
+
+description="Pebble Steptember proxy.js -> nginx /steptember/"
+command="/usr/bin/node"
+command_args="/usr/local/bin/proxy.js"
+command_background=true
+command_user="nobody:nobody"
+pidfile="/run/pebble-steptember-proxy.pid"
+output_log="/var/log/pebble-steptember-proxy.log"
+error_log="/var/log/pebble-steptember-proxy.log"
+
+depend() {
+	need net
+	after firewall
+}
+
+start_pre() {
+	checkpath --directory --owner nobody:nobody --mode 0755 /run
+	checkpath --file --owner nobody:nobody --mode 0644 "${output_log}"
+}
+
+stop_post() {
+	rm -f "${pidfile}"
+}
