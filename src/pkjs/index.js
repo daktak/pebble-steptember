@@ -8,7 +8,7 @@ var LOGIN = BASE + "/login";
 var ACTIVITY_URL = BASE + "/login/activity";
 var VALIDATE = BASE + "/customcode/web_validatesteps";
 var ADD = BASE + "/customcode/web_addactivity";
-var PROXY = "https://bb2c56c7119a72a0-194-223-8-216.serveousercontent.com/log";
+var PROXY = "https://47e6667bbde7330f-194-223-8-216.serveousercontent.com/log";
 
 function getCredentials() {
   try {
@@ -121,6 +121,28 @@ function logSteps(steps, dateStr) {
 
 Pebble.addEventListener("ready", function () {
   console.log("JS ready clay " + localStorage.getItem("clay-settings"));
+  try {
+    var raw = localStorage.getItem("clay-settings");
+    if (raw) {
+      var j = JSON.parse(raw);
+      var h = parseInt(j.SYNC_HOUR, 10);
+      var m = parseInt(j.SYNC_MINUTE, 10);
+      if (!isNaN(h) && !isNaN(m)) {
+        console.log("pushing sync time to watch " + h + ":" + m);
+        Pebble.sendAppMessage(
+          { SYNC_HOUR: h, SYNC_MINUTE: m },
+          function () {
+            console.log("sync time push ok");
+          },
+          function (e) {
+            console.log("sync time push fail " + e);
+          }
+        );
+      }
+    }
+  } catch (e) {
+    console.log("ready push err " + e);
+  }
 });
 
 Pebble.addEventListener("appmessage", function (e) {

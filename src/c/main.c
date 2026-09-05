@@ -6,6 +6,7 @@
 #define KEY_QUEUED_DATE 13
 #define KEY_QUEUED_STEPS 14
 #define KEY_QUEUED_PENDING 15
+#define KEY_WAKEUP_ID 16
 
 static Window *s_window;
 static TextLayer *s_time_layer;
@@ -16,6 +17,9 @@ static char s_time_buf[16];
 static char s_steps_buf[32];
 static char s_status_buf[64];
 static char s_date_buf[12];
+static bool s_wakeup_launch = false;
+static bool s_pending_wakeup = false;
+static AppTimer *s_exit_timer = NULL;
 
 static void format_date(time_t t, char *buf, size_t len) {
   struct tm *tm = localtime(&t);
@@ -53,8 +57,12 @@ static void update_steps_display(void) {
 
 static void set_status(const char *msg) {
   snprintf(s_status_buf, sizeof(s_status_buf), "%s", msg);
-  text_layer_set_text(s_status_layer, s_status_buf);
+  if (s_status_layer) text_layer_set_text(s_status_layer, s_status_buf);
   APP_LOG(APP_LOG_LEVEL_DEBUG, "status %s", msg);
+}
+
+static void exit_timer_callback(void *data) {
+  window_stack_pop_all(true);
 }
 
 static void send_steps(int steps, const char *date_str);
@@ -107,6 +115,48 @@ static bool is_already_synced_today(const char *date_str) {
   return strcmp(last, date_str) == 0;
 }
 
+static void try_daily_sync(bool force);
+
+static void schedule_wakeup(void) {
+  int h = 23;
+  int m = 0;
+  if (persist_exists(KEY_SYNC_HOUR)) h = persist_read_int(KEY_SYNC_HOUR);
+  if (persist_exists(KEY_SYNC_MINUTE)) m = persist_read_int(KEY_SYNC_MINUTE);
+  if (h < 0 || h > 23) h = 23;
+  if (m < 0 || m > 59) m = 0;
+  time_t now = time(NULL);
+  time_t today_start = time_start_of_today();
+  time_t target = today_start + h * 3600 + m * 60;
+  if (target <= now) target += 86400;
+  if (persist_exists(KEY_WAKEUP_ID)) {
+    WakeupId old = (WakeupId)persist_read_int(KEY_WAKEUP_ID);
+    wakeup_cancel(old);
+  }
+  WakeupId id = wakeup_schedule(target, 0, true);
+  if ((int)id >= 0) {
+    persist_write_int(KEY_WAKEUP_ID, (int)id);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "wakeup scheduled %d:%02d id %d target %ld now %ld", h, m, (int)id, (long)target, (long)now);
+  } else {
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "wakeup failed %d:%02d id %d err %d", h, m, (int)id, (int)id);
+    persist_delete(KEY_WAKEUP_ID);
+  }
+}
+
+static void wakeup_handler(WakeupId id, int32_t cookie) {
+  (void)id;
+  (void)cookie;
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "wakeup fired");
+  s_pending_wakeup = true;
+  if (s_window && connection_service_peek_pebblekit_connection()) {
+    s_pending_wakeup = false;
+    try_daily_sync(false);
+    if (s_wakeup_launch && is_already_synced_today(s_date_buf)) {
+      if (!s_exit_timer) s_exit_timer = app_timer_register(2000, exit_timer_callback, NULL);
+    }
+  }
+  schedule_wakeup();
+}
+
 static void try_daily_sync(bool force) {
   if (!has_health()) {
     set_status("No Health");
@@ -128,6 +178,13 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   strftime(s_time_buf, sizeof(s_time_buf), "%H:%M", tick_time);
   text_layer_set_text(s_time_layer, s_time_buf);
   update_steps_display();
+  if (s_pending_wakeup && connection_service_peek_pebblekit_connection()) {
+    s_pending_wakeup = false;
+    try_daily_sync(false);
+    if (s_wakeup_launch && is_already_synced_today(s_date_buf)) {
+      if (!s_exit_timer) s_exit_timer = app_timer_register(2000, exit_timer_callback, NULL);
+    }
+  }
   int sync_h = 23;
   int sync_m = 0;
   if (persist_exists(KEY_SYNC_HOUR)) sync_h = persist_read_int(KEY_SYNC_HOUR);
@@ -161,13 +218,25 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
   Tuple *t;
   t = dict_find(iter, MESSAGE_KEY_SYNC_HOUR);
   if (t) {
-    persist_write_int(KEY_SYNC_HOUR, (int)t->value->int32);
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "sync hour %d", (int)t->value->int32);
+    int v = 23;
+    if (t->type == TUPLE_CSTRING) v = atoi(t->value->cstring);
+    else if (t->type == TUPLE_INT) v = (int)t->value->int32;
+    else if (t->type == TUPLE_UINT) v = (int)t->value->uint32;
+    if (v < 0 || v > 23) v = 23;
+    persist_write_int(KEY_SYNC_HOUR, v);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "sync hour %d type %d", v, (int)t->type);
+    schedule_wakeup();
   }
   t = dict_find(iter, MESSAGE_KEY_SYNC_MINUTE);
   if (t) {
-    persist_write_int(KEY_SYNC_MINUTE, (int)t->value->int32);
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "sync min %d", (int)t->value->int32);
+    int v = 0;
+    if (t->type == TUPLE_CSTRING) v = atoi(t->value->cstring);
+    else if (t->type == TUPLE_INT) v = (int)t->value->int32;
+    else if (t->type == TUPLE_UINT) v = (int)t->value->uint32;
+    if (v < 0 || v > 59) v = 0;
+    persist_write_int(KEY_SYNC_MINUTE, v);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "sync min %d type %d", v, (int)t->type);
+    schedule_wakeup();
   }
   t = dict_find(iter, MESSAGE_KEY_EMAIL);
   if (t) {
@@ -178,7 +247,6 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
     const char *msg = t->value->cstring;
     set_status(msg);
     if (strncmp(msg, "OK", 2) == 0) {
-      vibes_short_pulse();
       if (persist_exists(KEY_QUEUED_DATE)) {
         char qdate[12];
         persist_read_string(KEY_QUEUED_DATE, qdate, sizeof(qdate));
@@ -189,8 +257,10 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
         persist_write_string(KEY_LAST_SYNC_DATE, s_date_buf);
       }
       persist_write_bool(KEY_QUEUED_PENDING, false);
+      if (s_wakeup_launch) {
+        if (!s_exit_timer) s_exit_timer = app_timer_register(2000, exit_timer_callback, NULL);
+      }
     } else if (strncmp(msg, "ERR", 3) == 0) {
-      vibes_long_pulse();
       set_status(msg);
     }
   }
@@ -255,6 +325,13 @@ static void window_load(Window *window) {
   time_t now = time(NULL);
   struct tm *t = localtime(&now);
   tick_handler(t, MINUTE_UNIT);
+  if (s_pending_wakeup && connection_service_peek_pebblekit_connection()) {
+    s_pending_wakeup = false;
+    try_daily_sync(false);
+    if (s_wakeup_launch && is_already_synced_today(s_date_buf)) {
+      if (!s_exit_timer) s_exit_timer = app_timer_register(2000, exit_timer_callback, NULL);
+    }
+  }
   if (!has_health()) set_status("No Health");
   else if (persist_exists(KEY_QUEUED_PENDING) && persist_read_bool(KEY_QUEUED_PENDING)) {
     set_status("Queued retry");
@@ -279,6 +356,10 @@ static void window_unload(Window *window) {
 #if defined(PBL_HEALTH)
   health_service_events_unsubscribe();
 #endif
+  if (s_exit_timer) {
+    app_timer_cancel(s_exit_timer);
+    s_exit_timer = NULL;
+  }
   text_layer_destroy(s_time_layer);
   text_layer_destroy(s_steps_layer);
   text_layer_destroy(s_status_layer);
@@ -291,6 +372,16 @@ static void init(void) {
   app_message_register_outbox_failed(outbox_failed_handler);
   app_message_register_outbox_sent(outbox_sent_handler);
   app_message_open(512, 512);
+  s_wakeup_launch = (launch_reason() == APP_LAUNCH_WAKEUP);
+  wakeup_service_subscribe(wakeup_handler);
+  if (s_wakeup_launch) {
+    WakeupId id;
+    int32_t cookie;
+    if (wakeup_get_launch_event(&id, &cookie)) wakeup_handler(id, cookie);
+    else { s_pending_wakeup = true; schedule_wakeup(); }
+  } else {
+    schedule_wakeup();
+  }
   s_window = window_create();
   window_set_background_color(s_window, GColorBlack);
   window_set_click_config_provider(s_window, click_config_provider);

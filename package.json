@@ -20,7 +20,6 @@
     "sdkVersion": "3",
     "enableMultiJS": true,
     "targetPlatforms": [
-      "aplite",
       "basalt",
       "chalk",
       "diorite",
@@ -31,7 +30,8 @@
     },
     "capabilities": [
       "configurable",
-      "health"
+      "health",
+      "wakeup"
     ],
     "messageKeys": [
       "STEPS",
