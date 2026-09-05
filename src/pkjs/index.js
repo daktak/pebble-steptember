@@ -8,7 +8,7 @@ var LOGIN = BASE + "/login";
 var ACTIVITY_URL = BASE + "/login/activity";
 var VALIDATE = BASE + "/customcode/web_validatesteps";
 var ADD = BASE + "/customcode/web_addactivity";
-var PROXY = "https://47e6667bbde7330f-194-223-8-216.serveousercontent.com/log";
+var PROXY = "https://yourdomain/steptember/log";
 
 function getCredentials() {
   try {
