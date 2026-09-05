@@ -1,49 +1,144 @@
-var CONFIG_PAGE = [
-  "<!DOCTYPE html><html><head>",
-  '<meta name="viewport" content="width=device-width,initial-scale=1">',
-  "<style>",
-  "body{background:#1a1a1a;color:#fff;font-family:sans-serif;padding:20px;margin:0}",
-  "h2{margin-top:0}",
-  "button{display:block;width:100%;padding:14px;margin:8px 0;border:none;",
-  "border-radius:8px;font-size:16px;cursor:pointer;font-weight:bold}",
-  "</style></head><body>",
-  "<h2>Time Colour</h2>",
-  '<button style="background:#fff;color:#000" onclick="send(0)">White</button>',
-  '<button style="background:#0f0;color:#000" onclick="send(1)">Green</button>',
-  '<button style="background:#ff0;color:#000" onclick="send(2)">Yellow</button>',
-  '<button style="background:#0ff;color:#000" onclick="send(3)">Cyan</button>',
-  '<button style="background:#f90;color:#000" onclick="send(4)">Orange</button>',
-  "<script>",
-  "function send(v){",
-  '  location.href="pebblejs://close#"+encodeURIComponent(JSON.stringify({colorIndex:v}));',
-  "}",
-  "</script></body></html>"
-].join("");
+var Clay = require("@rebble/clay");
+var clayConfig = require("./config.json");
+var clay = new Clay(clayConfig);
+var base64 = require("base-64");
 
-Pebble.addEventListener("ready", function() {
-  console.log("JS ready");
-});
+var BASE = "https://www.steptember.org.au";
+var LOGIN = BASE + "/login";
+var ACTIVITY_URL = BASE + "/login/activity";
+var VALIDATE = BASE + "/customcode/web_validatesteps";
+var ADD = BASE + "/customcode/web_addactivity";
+var PROXY = "https://bb2c56c7119a72a0-194-223-8-216.serveousercontent.com/log";
 
-Pebble.addEventListener("showConfiguration", function() {
-  Pebble.openURL("data:text/html," + encodeURIComponent(CONFIG_PAGE));
-});
+function getCredentials() {
+  try {
+    var raw = localStorage.getItem("clay-settings");
+    if (!raw) return { email: "", password: "" };
+    var j = JSON.parse(raw);
+    var email = j.EMAIL || "";
+    var pw = j.PASSWORD || "";
+    var decoded = pw;
+    try {
+      if (pw && /^[A-Za-z0-9+/=]+$/.test(pw) && pw.length % 4 === 0) {
+        var maybe = base64.decode(pw);
+        if (base64.encode(maybe) === pw) decoded = maybe;
+      }
+    } catch (e) {}
+    return { email: email, password: decoded, rawPw: pw };
+  } catch (e) {
+    console.log("getCredentials err " + e);
+    return { email: "", password: "" };
+  }
+}
 
-Pebble.addEventListener("webviewclosed", function(e) {
-  if (!e.response || e.response === "CANCELLED") {
+function newXHR() {
+  try {
+    var x = new XMLHttpRequest({ mozSystem: true });
+    console.log("using mozSystem XHR");
+    return x;
+  } catch (e) {}
+  try {
+    var y = new XMLHttpRequest({ mozAnon: true });
+    console.log("using mozAnon XHR");
+    return y;
+  } catch (e2) {}
+  return new XMLHttpRequest();
+}
+
+function sendStatus(msg) {
+  var s = String(msg).slice(0, 60);
+  console.log("sendStatus " + s);
+  Pebble.sendAppMessage(
+    { STATUS: s },
+    function () {
+      console.log("status ok");
+    },
+    function (e) {
+      console.log("status fail " + e);
+    }
+  );
+}
+
+function logSteps(steps, dateStr) {
+  var creds = getCredentials();
+  var email = creds.email;
+  var password = creds.password;
+  if (!email || !password) {
+    sendStatus("ERR no creds");
     return;
   }
+  var decodedCheck = "";
   try {
-    var config = JSON.parse(decodeURIComponent(e.response));
-    Pebble.sendAppMessage(
-      { COLOR_INDEX: config.colorIndex },
-      function() {
-        console.log("Settings sent");
-      },
-      function(err) {
-        console.log("Settings error: " + err);
-      }
+    var enc = base64.encode(password);
+    decodedCheck = base64.decode(enc);
+    console.log(
+      "pw b64 " + enc.slice(0, 8) + ".. ok=" + (decodedCheck === password)
     );
-  } catch (ex) {
-    console.log("Config parse error: " + ex);
+  } catch (e) {
+    console.log("base64 err " + e);
+  }
+  console.log(
+    "logSteps via proxy " +
+      steps +
+      " " +
+      dateStr +
+      " " +
+      email +
+      " -> " +
+      PROXY
+  );
+  var xhr = newXHR();
+  xhr.open("POST", PROXY, true);
+  try {
+    xhr.setRequestHeader("Content-Type", "application/json");
+  } catch (e) {}
+  xhr.onload = function () {
+    console.log(
+      "proxy resp " + xhr.status + " " + xhr.responseText.slice(0, 500)
+    );
+    try {
+      var j = JSON.parse(xhr.responseText);
+      if (j.success) sendStatus("OK " + steps + " " + dateStr);
+      else sendStatus("ERR " + (j.error || "proxy fail").slice(0, 30));
+    } catch (e) {
+      console.log("proxy parse err " + e);
+      sendStatus("ERR proxy " + xhr.status);
+    }
+  };
+  xhr.onerror = function () {
+    console.log("proxy onerror");
+    sendStatus("ERR proxy net");
+  };
+  xhr.send(
+    JSON.stringify({
+      email: email,
+      password: decodedCheck || password,
+      steps: steps,
+      date: dateStr
+    })
+  );
+}
+
+Pebble.addEventListener("ready", function () {
+  console.log("JS ready clay " + localStorage.getItem("clay-settings"));
+});
+
+Pebble.addEventListener("appmessage", function (e) {
+  console.log("appmessage " + JSON.stringify(e.payload));
+  var p = e.payload;
+  if (typeof p.STEPS !== "undefined" && typeof p.STEPS_DATE !== "undefined") {
+    var steps = parseInt(p.STEPS, 10);
+    var d = p.STEPS_DATE;
+    if (!isNaN(steps) && d) logSteps(steps, d);
+    else sendStatus("ERR bad payload");
+  } else if (typeof p.CMD !== "undefined") {
+    if (p.CMD === 1) {
+      var creds2 = getCredentials();
+      if (!creds2.email) {
+        sendStatus("ERR no email");
+        return;
+      }
+      sendStatus("READY");
+    }
   }
 });
