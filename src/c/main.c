@@ -166,6 +166,11 @@ static void try_daily_sync(bool force) {
   format_date(now, s_date_buf, sizeof(s_date_buf));
   if (!force && is_already_synced_today(s_date_buf)) return;
   if (persist_exists(KEY_QUEUED_PENDING) && persist_read_bool(KEY_QUEUED_PENDING)) {
+    if (!force && persist_exists(KEY_QUEUED_DATE)) {
+      char qdate[12];
+      persist_read_string(KEY_QUEUED_DATE, qdate, sizeof(qdate));
+      if (strcmp(qdate, s_date_buf) == 0) return;
+    }
     send_queued();
     return;
   }
