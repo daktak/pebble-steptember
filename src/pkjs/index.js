@@ -8,7 +8,7 @@ var LOGIN = BASE + "/login";
 var ACTIVITY_URL = BASE + "/login/activity";
 var VALIDATE = BASE + "/customcode/web_validatesteps";
 var ADD = BASE + "/customcode/web_addactivity";
-var PROXY = "https://domo.ddns.net:7070/steptember/log";
+var PROXY = "https://yourdns/steptember/log";
 
 function getCredentials() {
   try {
