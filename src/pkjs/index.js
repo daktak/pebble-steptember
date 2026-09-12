@@ -8,7 +8,20 @@ var LOGIN = BASE + "/login";
 var ACTIVITY_URL = BASE + "/login/activity";
 var VALIDATE = BASE + "/customcode/web_validatesteps";
 var ADD = BASE + "/customcode/web_addactivity";
-var PROXY = "https://yourdns/steptember/log";
+var DEFAULT_PROXY = "https://yourdns/steptember/log";
+
+function getProxy() {
+  try {
+    var raw = localStorage.getItem("clay-settings");
+    if (raw) {
+      var j = JSON.parse(raw);
+      if (j.PROXY) return j.PROXY;
+    }
+  } catch (e) {
+    console.log("getProxy err " + e);
+  }
+  return DEFAULT_PROXY;
+}
 
 function getCredentials() {
   try {
@@ -77,6 +90,7 @@ function logSteps(steps, dateStr) {
   } catch (e) {
     console.log("base64 err " + e);
   }
+  var proxy = getProxy();
   console.log(
     "logSteps via proxy " +
       steps +
@@ -85,10 +99,10 @@ function logSteps(steps, dateStr) {
       " " +
       email +
       " -> " +
-      PROXY
+      proxy
   );
   var xhr = newXHR();
-  xhr.open("POST", PROXY, true);
+  xhr.open("POST", proxy, true);
   try {
     xhr.setRequestHeader("Content-Type", "application/json");
   } catch (e) {}
@@ -114,7 +128,7 @@ function logSteps(steps, dateStr) {
       email: email,
       password: decodedCheck || password,
       steps: steps,
-      date: dateStr
+      date: dateStr,
     })
   );
 }

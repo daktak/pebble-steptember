@@ -33,6 +33,15 @@
           "placeholder": "••••••••",
           "type": "password"
         }
+      },
+      {
+        "type": "input",
+        "messageKey": "PROXY",
+        "label": "Proxy URL",
+        "defaultValue": "https://yourdns/steptember/log",
+        "attributes": {
+          "placeholder": "https://yourdns/steptember/log"
+        }
       }
     ]
   },
