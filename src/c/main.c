@@ -205,8 +205,13 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   } else {
     if (persist_exists(KEY_QUEUED_PENDING) && persist_read_bool(KEY_QUEUED_PENDING)) {
       if (tick_time->tm_min % 5 == 0) {
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "retry pending");
+        if (!persist_exists(KEY_QUEUED_DATE)) return;
+        char qdate[12];
+        persist_read_string(KEY_QUEUED_DATE, qdate, sizeof(qdate));
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "retry pending %s", qdate);
         send_queued();
+        persist_write_string(KEY_LAST_SYNC_DATE, qdate);
+        persist_write_bool(KEY_QUEUED_PENDING, false);
       }
     }
   }
