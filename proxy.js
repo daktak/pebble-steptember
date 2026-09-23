@@ -92,6 +92,22 @@ async function logSteptember(email, password, steps, dateStr) {
     history_id: parseInt(hid, 10),
     source: "manual",
   });
+  const activityHtml = (
+    await fetchWithCookies(
+      "https://www.steptember.org.au/login/activity",
+      {},
+      jar,
+    )
+  ).body;
+  if (activityHtml.includes(dateStr) && activityHtml.includes(String(steps))) {
+    console.log("skip add: already recorded", dateStr, steps);
+    return {
+      ok: true,
+      validate: true,
+      activityHtml: activityHtml.slice(0, 500),
+      skipped: true,
+    };
+  }
   r = await fetchWithCookies(
     "https://www.steptember.org.au/customcode/web_validatesteps",
     {
@@ -115,17 +131,8 @@ async function logSteptember(email, password, steps, dateStr) {
   let mm;
   while ((mm = re.exec(r.body)) !== null)
     if (mm[1]) formFields[mm[1]] = mm[2] || "";
-  // Actually need to parse from activity page html, not validate response. Use previous r.body from activity page
-  // For simplicity, reconstruct minimal form
+  // Hidden fields for web_addactivity are parsed from activityHtml below (fetched above).
   const formBody = `CSRFToken=${encodeURIComponent(csrf2)}&date_from=${encodeURIComponent(dateStr)}&steps=${encodeURIComponent(steps)}&activity_type=&duration=`;
-  // Need to also include other hidden fields from activity page; parse again
-  const activityHtml = (
-    await fetchWithCookies(
-      "https://www.steptember.org.au/login/activity",
-      {},
-      jar,
-    )
-  ).body;
   const hiddenRe = /<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"[^>]*>/gi;
   const allFields = {};
   let hm;

@@ -115,6 +115,19 @@ static bool is_already_synced_today(const char *date_str) {
   return strcmp(last, date_str) == 0;
 }
 
+static void discard_queue(void) {
+  persist_delete(KEY_QUEUED_DATE);
+  persist_delete(KEY_QUEUED_STEPS);
+  persist_delete(KEY_QUEUED_PENDING);
+}
+
+static bool queue_stale_for(const char *date_str) {
+  if (!persist_exists(KEY_QUEUED_DATE)) return true;
+  char qdate[12];
+  persist_read_string(KEY_QUEUED_DATE, qdate, sizeof(qdate));
+  return strcmp(qdate, date_str) != 0;
+}
+
 static void try_daily_sync(bool force);
 
 static void schedule_wakeup(void) {
@@ -166,18 +179,13 @@ static void try_daily_sync(bool force) {
   format_date(now, s_date_buf, sizeof(s_date_buf));
   if (!force && is_already_synced_today(s_date_buf)) return;
   if (persist_exists(KEY_QUEUED_PENDING) && persist_read_bool(KEY_QUEUED_PENDING)) {
-    if (!persist_exists(KEY_QUEUED_DATE)) return;
-    char qdate[12];
-    persist_read_string(KEY_QUEUED_DATE, qdate, sizeof(qdate));
-    send_queued();
-    persist_write_string(KEY_LAST_SYNC_DATE, qdate);
-    persist_write_bool(KEY_QUEUED_PENDING, false);
-    return;
+    if (queue_stale_for(s_date_buf)) {
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "discard stale queue");
+      discard_queue();
+    }
   }
-  if (!force && is_already_synced_today(s_date_buf)) return;
   int steps = get_steps_today();
   queue_steps(steps, s_date_buf);
-  persist_write_string(KEY_LAST_SYNC_DATE, s_date_buf);
 }
 
 static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
@@ -205,13 +213,18 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   } else {
     if (persist_exists(KEY_QUEUED_PENDING) && persist_read_bool(KEY_QUEUED_PENDING)) {
       if (tick_time->tm_min % 5 == 0) {
-        if (!persist_exists(KEY_QUEUED_DATE)) return;
+        time_t now = time(NULL);
+        char today[12];
+        format_date(now, today, sizeof(today));
+        if (queue_stale_for(today)) {
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "discard stale retry");
+          discard_queue();
+          return;
+        }
         char qdate[12];
         persist_read_string(KEY_QUEUED_DATE, qdate, sizeof(qdate));
         APP_LOG(APP_LOG_LEVEL_DEBUG, "retry pending %s", qdate);
         send_queued();
-        persist_write_string(KEY_LAST_SYNC_DATE, qdate);
-        persist_write_bool(KEY_QUEUED_PENDING, false);
       }
     }
   }
@@ -345,8 +358,17 @@ static void window_load(Window *window) {
   }
   if (!has_health()) set_status("No Health");
   else if (persist_exists(KEY_QUEUED_PENDING) && persist_read_bool(KEY_QUEUED_PENDING)) {
-    set_status("Queued retry");
-    send_queued();
+    time_t now = time(NULL);
+    char today[12];
+    format_date(now, today, sizeof(today));
+    if (queue_stale_for(today)) {
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "discard stale queue");
+      discard_queue();
+      set_status("Ready");
+    } else {
+      set_status("Queued retry");
+      send_queued();
+    }
   } else if (persist_exists(KEY_LAST_SYNC_DATE)) {
     char last[12];
     persist_read_string(KEY_LAST_SYNC_DATE, last, sizeof(last));
