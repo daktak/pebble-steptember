@@ -168,6 +168,8 @@ async function logSteptember(email, password, steps, dateStr) {
   return { ok, validate: vok, activityHtml: r.body.slice(0, 500) };
 }
 
+let logQueue = Promise.resolve();
+
 const server = http.createServer(async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -180,9 +182,18 @@ const server = http.createServer(async (req, res) => {
   if (req.url === "/log" && req.method === "POST") {
     let body = "";
     req.on("data", (chunk) => (body += chunk));
-    req.on("end", async () => {
+    req.on("end", () => {
+      let j;
       try {
-        const j = JSON.parse(body);
+        j = JSON.parse(body);
+      } catch (e) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, error: "bad json" }));
+        return;
+      }
+      // Serialize logging so concurrent duplicates run one-at-a-time; a
+      // duplicate then sees the first add already recorded and is skipped.
+      logQueue = logQueue.then(async () => {
         console.log("proxy request", j.email, j.steps, j.date);
         const result = await logSteptember(
           j.email,
@@ -190,13 +201,17 @@ const server = http.createServer(async (req, res) => {
           j.steps,
           j.date,
         );
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ success: true, result }));
-      } catch (e) {
+        if (!res.writableEnded) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true, result }));
+        }
+      }).catch((e) => {
         console.error(e);
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ success: false, error: e.message }));
-      }
+        if (!res.writableEnded) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: false, error: e.message }));
+        }
+      });
     });
     return;
   }

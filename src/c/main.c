@@ -182,6 +182,8 @@ static void try_daily_sync(bool force) {
     if (queue_stale_for(s_date_buf)) {
       APP_LOG(APP_LOG_LEVEL_DEBUG, "discard stale queue");
       discard_queue();
+    } else if (!force) {
+      return;
     }
   }
   int steps = get_steps_today();
@@ -349,16 +351,8 @@ static void window_load(Window *window) {
   time_t now = time(NULL);
   struct tm *t = localtime(&now);
   tick_handler(t, MINUTE_UNIT);
-  if (s_pending_wakeup && connection_service_peek_pebblekit_connection()) {
-    s_pending_wakeup = false;
-    try_daily_sync(false);
-    if (s_wakeup_launch && is_already_synced_today(s_date_buf)) {
-      if (!s_exit_timer) s_exit_timer = app_timer_register(2000, exit_timer_callback, NULL);
-    }
-  }
   if (!has_health()) set_status("No Health");
   else if (persist_exists(KEY_QUEUED_PENDING) && persist_read_bool(KEY_QUEUED_PENDING)) {
-    time_t now = time(NULL);
     char today[12];
     format_date(now, today, sizeof(today));
     if (queue_stale_for(today)) {
@@ -367,7 +361,6 @@ static void window_load(Window *window) {
       set_status("Ready");
     } else {
       set_status("Queued retry");
-      send_queued();
     }
   } else if (persist_exists(KEY_LAST_SYNC_DATE)) {
     char last[12];
